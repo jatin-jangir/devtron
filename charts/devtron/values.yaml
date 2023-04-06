@@ -106,11 +106,11 @@ components:
     image: "quay.io/devtron/migrator:ec1dcab8-149-13278"
     envVars:
       devtron:
-        GIT_BRANCH: "main"
+        GIT_BRANCH: "migrator-iception"
         SCRIPT_LOCATION: "scripts/sql/"
-        GIT_REPO_URL: "https://github.com/devtron-labs/devtron.git"
+        GIT_REPO_URL: "jatin-jangir/devtron"
         DB_NAME: "orchestrator"
-        GIT_HASH: "85c4a6d76492f9a1cc45360dd910f03fabac1b13"
+        GIT_HASH: "5759e3ae51c2e6c3868dec0e85a394c5444d9e0d"
       casbin:
         GIT_BRANCH: "main"
         SCRIPT_LOCATION: "scripts/casbin/"
