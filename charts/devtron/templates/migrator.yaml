@@ -1,5 +1,6 @@
 {{- with .Values.components.migrator }}
 ---
+#testing 
 {{- if $.Capabilities.APIVersions.Has "batch/v1/Job" -}}
 apiVersion: batch/v1
 {{- else -}}
@@ -107,7 +108,7 @@ spec:
         - name: DB_PORT
           value: "5432"
         - name: DB_NAME
-          value: {{ .envVars.casbin.DB_NAME }}
+          value: {{ .envVars.casbin.DB_NAME  }}
         - name: MIGRATE_TO_VERSION
           value: "0"
         - name: GIT_HASH
