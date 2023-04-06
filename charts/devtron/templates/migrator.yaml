@@ -1,7 +1,7 @@
 {{- with .Values.components.migrator }}
 ---
 #testing 
-{{- if $.Capabilities.APIVersions.Has "batch/v1/Job" -}}
+{{- if $.Capabilities.APIVersions.Has "batch/v1/Job" }}
 apiVersion: batch/v1
 {{- else -}}
 apiVersion: batch/v1beta1
