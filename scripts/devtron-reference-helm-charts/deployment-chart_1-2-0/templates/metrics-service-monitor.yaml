@@ -26,5 +26,5 @@ spec:
   podTargetLabels:
     - appId
     - envId
-    - pod-template-hash
+    - pod-template-hash 
 {{- end }}
