@@ -250,9 +250,10 @@ func (impl CiCdPipelineOrchestratorImpl) PatchMaterialValue(createRequest *bean.
 		} else {
 			pipelineMaterial.CiPipelineId = createRequest.Id
 			pipelineMaterial.CreatedBy = userId
-			materialsUpdate = append(materialsUpdate, pipelineMaterial)
 			pipelineMaterial.CreatedOn = createOnTimeMap[material.GitMaterialId]
-			pipelineMaterial.CreatedBy = createByMap[material.GitMaterialId]
+			pipelineMaterial.UpdatedOn = time.Now()
+			pipelineMaterial.UpdatedBy = userId
+			materialsUpdate = append(materialsUpdate, pipelineMaterial)
 		}
 	}
 	if len(materialsAdd) > 0 {
@@ -319,8 +320,9 @@ func (impl CiCdPipelineOrchestratorImpl) PatchMaterialValue(createRequest *bean.
 			DockerRegistryId: createRequest.DockerConfigOverride.DockerRegistry,
 			DockerRepository: createRequest.DockerConfigOverride.DockerRepository,
 			//DockerfilePath:   createRequest.DockerConfigOverride.DockerBuildConfig.DockerfilePath,
-			GitMaterialId: ciBuildConfigBean.GitMaterialId,
-			Active:        true,
+			GitMaterialId:             ciBuildConfigBean.GitMaterialId,
+			BuildContextGitMaterialId: ciBuildConfigBean.BuildContextGitMaterialId,
+			Active:                    true,
 			AuditLog: sql.AuditLog{
 				CreatedOn: time.Now(),
 				CreatedBy: userId,
@@ -453,13 +455,8 @@ func (impl CiCdPipelineOrchestratorImpl) DeleteCiPipeline(pipeline *pipelineConf
 		if err != nil {
 			return err
 		}
-		pipelineMaterial := &pipelineConfig.CiPipelineMaterial{
-			Id:       material.Id,
-			Active:   false,
-			Type:     materialDbObject.Type,
-			AuditLog: sql.AuditLog{UpdatedBy: userId, UpdatedOn: time.Now()},
-		}
-		materials = append(materials, pipelineMaterial)
+		materialDbObject.Active = false
+		materials = append(materials, materialDbObject)
 	}
 
 	if request.CiPipeline.ExternalCiConfig.Id != 0 {
@@ -631,8 +628,9 @@ func (impl CiCdPipelineOrchestratorImpl) CreateCiConf(createRequest *bean.CiConf
 				DockerRegistryId: ciPipeline.DockerConfigOverride.DockerRegistry,
 				DockerRepository: ciPipeline.DockerConfigOverride.DockerRepository,
 				//DockerfilePath:   ciPipeline.DockerConfigOverride.DockerBuildConfig.DockerfilePath,
-				GitMaterialId: ciPipeline.DockerConfigOverride.CiBuildConfig.GitMaterialId,
-				Active:        true,
+				GitMaterialId:             ciPipeline.DockerConfigOverride.CiBuildConfig.GitMaterialId,
+				BuildContextGitMaterialId: ciPipeline.DockerConfigOverride.CiBuildConfig.BuildContextGitMaterialId,
+				Active:                    true,
 				AuditLog: sql.AuditLog{
 					CreatedBy: createRequest.UserId,
 					CreatedOn: time.Now(),
@@ -955,6 +953,7 @@ func (impl CiCdPipelineOrchestratorImpl) updateRepositoryToGitSensor(material *p
 		CheckoutLocation: material.CheckoutPath,
 		Deleted:          !material.Active,
 		FetchSubmodules:  material.FetchSubmodules,
+		FilterPattern:    material.FilterPattern,
 	}
 	return impl.GitSensorClient.UpdateRepo(context.Background(), sensorMaterial)
 }
@@ -969,6 +968,7 @@ func (impl CiCdPipelineOrchestratorImpl) addRepositoryToGitSensor(materials []*b
 			GitProviderId:   material.GitProviderId,
 			Deleted:         false,
 			FetchSubmodules: material.FetchSubmodules,
+			FilterPattern:   material.FilterPattern,
 		}
 		sensorMaterials = append(sensorMaterials, sensorMaterial)
 	}
@@ -1111,6 +1111,7 @@ func (impl CiCdPipelineOrchestratorImpl) updateMaterial(updateMaterialDTO *bean.
 	currentMaterial.GitProviderId = updateMaterialDTO.Material.GitProviderId
 	currentMaterial.CheckoutPath = updateMaterialDTO.Material.CheckoutPath
 	currentMaterial.FetchSubmodules = updateMaterialDTO.Material.FetchSubmodules
+	currentMaterial.FilterPattern = updateMaterialDTO.Material.FilterPattern
 	currentMaterial.AuditLog = sql.AuditLog{UpdatedBy: updateMaterialDTO.UserId, CreatedBy: currentMaterial.CreatedBy, UpdatedOn: time.Now(), CreatedOn: currentMaterial.CreatedOn}
 
 	err = impl.materialRepository.UpdateMaterial(currentMaterial)
@@ -1136,6 +1137,7 @@ func (impl CiCdPipelineOrchestratorImpl) createMaterial(inputMaterial *bean.GitM
 		Active:          true,
 		CheckoutPath:    inputMaterial.CheckoutPath,
 		FetchSubmodules: inputMaterial.FetchSubmodules,
+		FilterPattern:   inputMaterial.FilterPattern,
 		AuditLog:        sql.AuditLog{UpdatedBy: userId, CreatedBy: userId, UpdatedOn: time.Now(), CreatedOn: time.Now()},
 	}
 	err := impl.materialRepository.SaveMaterial(material)
