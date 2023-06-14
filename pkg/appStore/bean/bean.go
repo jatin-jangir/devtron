@@ -71,6 +71,7 @@ type InstallAppVersionDTO struct {
 	EnvironmentId                int                        `json:"environmentId,omitempty"`
 	InstalledAppId               int                        `json:"installedAppId,omitempty,notnull"`
 	InstalledAppVersionId        int                        `json:"installedAppVersionId,omitempty,notnull"`
+	InstalledAppVersionHistoryId int                        `json:"installedAppVersionHistoryId,omitempty"`
 	AppStoreVersion              int                        `json:"appStoreVersion,omitempty,notnull"`
 	ValuesOverrideYaml           string                     `json:"valuesOverrideYaml,omitempty"`
 	Readme                       string                     `json:"readme,omitempty"`
@@ -97,6 +98,10 @@ type InstallAppVersionDTO struct {
 	DeploymentAppType            string                     `json:"deploymentAppType"`
 	AcdPartialDelete             bool                       `json:"acdPartialDelete"`
 	AppStoreApplicationVersionId int
+	PerformGitOpsForHelmApp      bool `json:"performGitOpsForHelmApp"`
+	PerformGitOps                bool `json:"performGitOps"`
+	PerformACDDeployment         bool `json:"performACDDeployment"`
+	PerformHelmDeployment        bool `json:"performHelmDeployment"`
 }
 
 type InstallAppVersionChartDTO struct {
@@ -182,7 +187,8 @@ const BULK_APPSTORE_DEPLOY_GROUP = "ORCHESTRATOR.APP-STORE.BULK-DEPLOY-GROUP-1"
 const BULK_APPSTORE_DEPLOY_DURABLE = "ORCHESTRATOR.APP-STORE.BULK-DEPLOY.DURABLE-1"
 
 type DeployPayload struct {
-	InstalledAppVersionId int
+	InstalledAppVersionId        int
+	InstalledAppVersionHistoryId int
 }
 
 const REFERENCE_TYPE_DEFAULT string = "DEFAULT"
@@ -345,4 +351,13 @@ const (
 func (a AppstoreDeploymentStatus) String() string {
 	return [...]string{"WF_UNKNOWN", "REQUEST_ACCEPTED", "ENQUEUED", "QUE_ERROR", "DEQUE_ERROR", "TRIGGER_ERROR", "DEPLOY_SUCCESS", "DEPLOY_INIT", "GIT_ERROR", "GIT_SUCCESS", "ACD_ERROR", "ACD_SUCCESS", "HELM_ERROR",
 		"HELM_SUCCESS"}[a]
+}
+
+type PushChartToGitRequestDTO struct {
+	AppName           string
+	EnvName           string
+	ChartAppStoreName string
+	RepoURL           string
+	TempChartRefDir   string
+	UserId            int32
 }

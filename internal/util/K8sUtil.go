@@ -56,9 +56,20 @@ type K8sUtil struct {
 }
 
 type ClusterConfig struct {
-	Host        string
-	BearerToken string
+	ClusterName           string
+	Host                  string
+	BearerToken           string
+	InsecureSkipTLSVerify bool
+	KeyData               string
+	CertData              string
+	CAData                string
 }
+
+const DEFAULT_CLUSTER = "default_cluster"
+const BearerToken = "bearer_token"
+const CertificateAuthorityData = "cert_auth_data"
+const CertData = "cert_data"
+const TlsKey = "tls_key"
 
 func NewK8sUtil(logger *zap.SugaredLogger, runTimeConfig *client.RuntimeConfig) *K8sUtil {
 	usr, err := user.Current()
@@ -74,11 +85,34 @@ func NewK8sUtil(logger *zap.SugaredLogger, runTimeConfig *client.RuntimeConfig) 
 	return &K8sUtil{logger: logger, runTimeConfig: runTimeConfig, kubeconfig: kubeconfig}
 }
 
+func (impl K8sUtil) GetRestConfigByCluster(configMap *ClusterConfig) (*rest.Config, error) {
+	bearerToken := configMap.BearerToken
+	var restConfig *rest.Config
+	var err error
+	if configMap.ClusterName == DEFAULT_CLUSTER && len(bearerToken) == 0 {
+		restConfig, err = impl.GetK8sClusterRestConfig()
+		if err != nil {
+			impl.logger.Errorw("error in getting rest config for default cluster", "err", err)
+			return nil, err
+		}
+	} else {
+		restConfig = &rest.Config{Host: configMap.Host, BearerToken: bearerToken, TLSClientConfig: rest.TLSClientConfig{Insecure: configMap.InsecureSkipTLSVerify}}
+		if configMap.InsecureSkipTLSVerify == false {
+			restConfig.TLSClientConfig.ServerName = restConfig.ServerName
+			restConfig.TLSClientConfig.KeyData = []byte(configMap.KeyData)
+			restConfig.TLSClientConfig.CertData = []byte(configMap.CertData)
+			restConfig.TLSClientConfig.CAData = []byte(configMap.CAData)
+		}
+	}
+	return restConfig, nil
+}
+
 func (impl K8sUtil) GetClient(clusterConfig *ClusterConfig) (*v12.CoreV1Client, error) {
-	cfg := &rest.Config{}
-	cfg.Host = clusterConfig.Host
-	cfg.BearerToken = clusterConfig.BearerToken
-	cfg.Insecure = true
+	cfg, err := impl.GetRestConfigByCluster(clusterConfig)
+	if err != nil {
+		impl.logger.Errorw("error in getting rest config for default cluster", "err", err)
+		return nil, err
+	}
 	httpClient, err := OverrideK8sHttpClientWithTracer(cfg)
 	if err != nil {
 		return nil, err
@@ -88,10 +122,11 @@ func (impl K8sUtil) GetClient(clusterConfig *ClusterConfig) (*v12.CoreV1Client, 
 }
 
 func (impl K8sUtil) GetClientSet(clusterConfig *ClusterConfig) (*kubernetes.Clientset, error) {
-	cfg := &rest.Config{}
-	cfg.Host = clusterConfig.Host
-	cfg.BearerToken = clusterConfig.BearerToken
-	cfg.Insecure = true
+	cfg, err := impl.GetRestConfigByCluster(clusterConfig)
+	if err != nil {
+		impl.logger.Errorw("error in getting rest config for default cluster", "err", err)
+		return nil, err
+	}
 	httpClient, err := OverrideK8sHttpClientWithTracer(cfg)
 	if err != nil {
 		return nil, err
@@ -157,10 +192,11 @@ func (impl K8sUtil) GetK8sClient() (*v12.CoreV1Client, error) {
 }
 
 func (impl K8sUtil) GetK8sDiscoveryClient(clusterConfig *ClusterConfig) (*discovery.DiscoveryClient, error) {
-	cfg := &rest.Config{}
-	cfg.Host = clusterConfig.Host
-	cfg.BearerToken = clusterConfig.BearerToken
-	cfg.Insecure = true
+	cfg, err := impl.GetRestConfigByCluster(clusterConfig)
+	if err != nil {
+		impl.logger.Errorw("error in getting rest config for default cluster", "err", err)
+		return nil, err
+	}
 	httpClient, err := OverrideK8sHttpClientWithTracer(cfg)
 	if err != nil {
 		return nil, err
@@ -332,12 +368,20 @@ func (impl K8sUtil) GetSecret(namespace string, name string, client *v12.CoreV1C
 	}
 }
 
-func (impl K8sUtil) CreateSecret(namespace string, data map[string][]byte, secretName string, secretType v1.SecretType, client *v12.CoreV1Client) (*v1.Secret, error) {
+func (impl K8sUtil) CreateSecret(namespace string, data map[string][]byte, secretName string, secretType v1.SecretType, client *v12.CoreV1Client, labels map[string]string, stringData map[string]string) (*v1.Secret, error) {
 	secret := &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: secretName,
 		},
-		Data: data,
+	}
+	if labels != nil && len(labels) > 0 {
+		secret.ObjectMeta.Labels = labels
+	}
+	if stringData != nil && len(stringData) > 0 {
+		secret.StringData = stringData
+	}
+	if data != nil && len(data) > 0 {
+		secret.Data = data
 	}
 	if len(secretType) > 0 {
 		secret.Type = secretType
@@ -363,9 +407,8 @@ func (impl K8sUtil) DeleteSecret(namespace string, name string, client *v12.Core
 	err := client.Secrets(namespace).Delete(context.Background(), name, metav1.DeleteOptions{})
 	if err != nil {
 		return err
-	} else {
-		return nil
 	}
+	return nil
 }
 
 func (impl K8sUtil) DeleteJob(namespace string, name string, clusterConfig *ClusterConfig) error {
@@ -497,7 +540,7 @@ func (impl K8sUtil) ListNamespaces(client *v12.CoreV1Client) (*v1.NamespaceList,
 }
 
 func (impl K8sUtil) GetClientByToken(serverUrl string, token map[string]string) (*v12.CoreV1Client, error) {
-	bearerToken := token["bearer_token"]
+	bearerToken := token[BearerToken]
 	clusterCfg := &ClusterConfig{Host: serverUrl, BearerToken: bearerToken}
 	client, err := impl.GetClient(clusterCfg)
 	if err != nil {

@@ -27,10 +27,14 @@ import (
 	"github.com/devtron-labs/devtron/internal/constants"
 	"github.com/devtron-labs/devtron/internal/middleware"
 	"github.com/devtron-labs/devtron/internal/sql/repository/app"
+	"github.com/devtron-labs/devtron/internal/sql/repository/pipelineConfig"
+	"github.com/devtron-labs/devtron/pkg/app/status"
 	"github.com/devtron-labs/devtron/pkg/appStatus"
 	appStoreBean "github.com/devtron-labs/devtron/pkg/appStore/bean"
+	appStoreDeploymentCommon "github.com/devtron-labs/devtron/pkg/appStore/deployment/common"
 	appStoreDeploymentFullMode "github.com/devtron-labs/devtron/pkg/appStore/deployment/fullMode"
 	repository2 "github.com/devtron-labs/devtron/pkg/appStore/deployment/repository"
+	appStoreDeploymentGitopsTool "github.com/devtron-labs/devtron/pkg/appStore/deployment/tool/gitops"
 	appStoreDiscoverRepository "github.com/devtron-labs/devtron/pkg/appStore/discover/repository"
 	"github.com/devtron-labs/devtron/pkg/appStore/values/service"
 	repository5 "github.com/devtron-labs/devtron/pkg/cluster/repository"
@@ -76,7 +80,7 @@ const (
 type InstalledAppService interface {
 	GetAll(filter *appStoreBean.AppStoreFilter) (openapi.AppList, error)
 	DeployBulk(chartGroupInstallRequest *appStoreBean.ChartGroupInstallRequest) (*appStoreBean.ChartGroupInstallAppRes, error)
-	performDeployStage(appId int, userId int32) (*appStoreBean.InstallAppVersionDTO, error)
+	performDeployStage(appId int, installedAppVersionHistoryId int, userId int32) (*appStoreBean.InstallAppVersionDTO, error)
 	CheckAppExists(appNames []*appStoreBean.AppNames) ([]*appStoreBean.AppNames, error)
 	DeployDefaultChartOnCluster(bean *cluster2.ClusterBean, userId int32) (bool, error)
 	FindAppDetailsForAppstoreApplication(installedAppId, envId int) (bean2.AppDetailContainer, error)
@@ -120,6 +124,8 @@ type InstalledAppServiceImpl struct {
 	attributesRepository                 repository3.AttributesRepository
 	appStatusService                     appStatus.AppStatusService
 	K8sUtil                              *util.K8sUtil
+	pipelineStatusTimelineService        status.PipelineStatusTimelineService
+	appStoreDeploymentCommonService      appStoreDeploymentCommon.AppStoreDeploymentCommonService
 }
 
 func NewInstalledAppServiceImpl(logger *zap.SugaredLogger,
@@ -141,7 +147,10 @@ func NewInstalledAppServiceImpl(logger *zap.SugaredLogger,
 	installedAppRepositoryHistory repository2.InstalledAppVersionHistoryRepository,
 	argoUserService argo.ArgoUserService, helmAppClient client.HelmAppClient, helmAppService client.HelmAppService,
 	attributesRepository repository3.AttributesRepository,
-	appStatusService appStatus.AppStatusService, K8sUtil *util.K8sUtil) (*InstalledAppServiceImpl, error) {
+	appStatusService appStatus.AppStatusService, K8sUtil *util.K8sUtil,
+	pipelineStatusTimelineService status.PipelineStatusTimelineService,
+	appStoreDeploymentCommonService appStoreDeploymentCommon.AppStoreDeploymentCommonService,
+	appStoreDeploymentArgoCdService appStoreDeploymentGitopsTool.AppStoreDeploymentArgoCdService) (*InstalledAppServiceImpl, error) {
 	impl := &InstalledAppServiceImpl{
 		logger:                               logger,
 		installedAppRepository:               installedAppRepository,
@@ -172,6 +181,8 @@ func NewInstalledAppServiceImpl(logger *zap.SugaredLogger,
 		attributesRepository:                 attributesRepository,
 		appStatusService:                     appStatusService,
 		K8sUtil:                              K8sUtil,
+		pipelineStatusTimelineService:        pipelineStatusTimelineService,
+		appStoreDeploymentCommonService:      appStoreDeploymentCommonService,
 	}
 	err := impl.Subscribe()
 	if err != nil {
@@ -359,13 +370,15 @@ func (impl InstalledAppServiceImpl) createChartGroupEntryObject(installAppVersio
 	}
 }
 func (impl InstalledAppServiceImpl) performDeployStageOnAcd(installedAppVersion *appStoreBean.InstallAppVersionDTO, ctx context.Context, userId int32) (*appStoreBean.InstallAppVersionDTO, error) {
+	installedAppVersion.ACDAppName = fmt.Sprintf("%s-%s", installedAppVersion.AppName, installedAppVersion.Environment.Name)
 	chartGitAttr := &util.ChartGitAttribute{}
 	if installedAppVersion.Status == appStoreBean.DEPLOY_INIT ||
 		installedAppVersion.Status == appStoreBean.ENQUEUED ||
 		installedAppVersion.Status == appStoreBean.QUE_ERROR ||
 		installedAppVersion.Status == appStoreBean.GIT_ERROR {
 		//step 2 git operation pull push
-		installedAppVersion, chartGitAttrDB, err := impl.appStoreDeploymentFullModeService.AppStoreDeployOperationGIT(installedAppVersion)
+		//TODO: save git Timeline here
+		appStoreGitOpsResponse, err := impl.appStoreDeploymentCommonService.GenerateManifestAndPerformGitOperations(installedAppVersion)
 		if err != nil {
 			impl.logger.Errorw(" error", "err", err)
 			_, err = impl.appStoreDeploymentService.AppStoreDeployOperationStatusUpdate(installedAppVersion.InstalledAppId, appStoreBean.GIT_ERROR)
@@ -373,16 +386,43 @@ func (impl InstalledAppServiceImpl) performDeployStageOnAcd(installedAppVersion 
 				impl.logger.Errorw(" error", "err", err)
 				return nil, err
 			}
+			timeline := &pipelineConfig.PipelineStatusTimeline{
+				InstalledAppVersionHistoryId: installedAppVersion.InstalledAppVersionHistoryId,
+				Status:                       pipelineConfig.TIMELINE_STATUS_GIT_COMMIT_FAILED,
+				StatusDetail:                 fmt.Sprintf("Git commit failed - %v", err),
+				StatusTime:                   time.Now(),
+				AuditLog: sql.AuditLog{
+					CreatedBy: installedAppVersion.UserId,
+					CreatedOn: time.Now(),
+					UpdatedBy: installedAppVersion.UserId,
+					UpdatedOn: time.Now(),
+				},
+			}
+			_ = impl.pipelineStatusTimelineService.SaveTimeline(timeline, nil, true)
 			return nil, err
 		}
-		impl.logger.Infow("GIT SUCCESSFUL", "chartGitAttrDB", chartGitAttrDB)
+		timeline := &pipelineConfig.PipelineStatusTimeline{
+			InstalledAppVersionHistoryId: installedAppVersion.InstalledAppVersionHistoryId,
+			Status:                       pipelineConfig.TIMELINE_STATUS_GIT_COMMIT,
+			StatusDetail:                 "Git commit done successfully.",
+			StatusTime:                   time.Now(),
+			AuditLog: sql.AuditLog{
+				CreatedBy: installedAppVersion.UserId,
+				CreatedOn: time.Now(),
+				UpdatedBy: installedAppVersion.UserId,
+				UpdatedOn: time.Now(),
+			},
+		}
+		_ = impl.pipelineStatusTimelineService.SaveTimeline(timeline, nil, true)
+		impl.logger.Infow("GIT SUCCESSFUL", "chartGitAttrDB", appStoreGitOpsResponse)
 		_, err = impl.appStoreDeploymentService.AppStoreDeployOperationStatusUpdate(installedAppVersion.InstalledAppId, appStoreBean.GIT_SUCCESS)
 		if err != nil {
 			impl.logger.Errorw(" error", "err", err)
 			return nil, err
 		}
-		chartGitAttr.RepoUrl = chartGitAttrDB.RepoUrl
-		chartGitAttr.ChartLocation = chartGitAttrDB.ChartLocation
+		installedAppVersion.GitHash = appStoreGitOpsResponse.GitHash
+		chartGitAttr.RepoUrl = appStoreGitOpsResponse.ChartGitAttribute.RepoUrl
+		chartGitAttr.ChartLocation = appStoreGitOpsResponse.ChartGitAttribute.ChartLocation
 	} else {
 		impl.logger.Infow("DB and GIT operation already done for this app and env, proceed for further step", "installedAppId", installedAppVersion.InstalledAppId, "existing status", installedAppVersion.Status)
 		environment, err := impl.environmentRepository.FindById(installedAppVersion.EnvironmentId)
@@ -443,12 +483,13 @@ func (impl InstalledAppServiceImpl) performDeployStageOnAcd(installedAppVersion 
 	}
 	return installedAppVersion, nil
 }
-func (impl InstalledAppServiceImpl) performDeployStage(installedAppVersionId int, userId int32) (*appStoreBean.InstallAppVersionDTO, error) {
+func (impl InstalledAppServiceImpl) performDeployStage(installedAppVersionId int, installedAppVersionHistoryId int, userId int32) (*appStoreBean.InstallAppVersionDTO, error) {
 	ctx := context.Background()
 	installedAppVersion, err := impl.appStoreDeploymentService.GetInstalledAppVersion(installedAppVersionId, userId)
 	if err != nil {
 		return nil, err
 	}
+	installedAppVersion.InstalledAppVersionHistoryId = installedAppVersionHistoryId
 	if util.IsAcdApp(installedAppVersion.DeploymentAppType) {
 		//this method should only call in case of argo-integration installed and git-ops has configured
 		acdToken, err := impl.argoUserService.GetLatestDevtronArgoCdUserToken()
@@ -457,12 +498,29 @@ func (impl InstalledAppServiceImpl) performDeployStage(installedAppVersionId int
 			return nil, err
 		}
 		ctx = context.WithValue(ctx, "token", acdToken)
+		timeline := &pipelineConfig.PipelineStatusTimeline{
+			InstalledAppVersionHistoryId: installedAppVersion.InstalledAppVersionHistoryId,
+			Status:                       pipelineConfig.TIMELINE_STATUS_DEPLOYMENT_INITIATED,
+			StatusDetail:                 "Deployment initiated successfully.",
+			StatusTime:                   time.Now(),
+			AuditLog: sql.AuditLog{
+				CreatedBy: installedAppVersion.UserId,
+				CreatedOn: time.Now(),
+				UpdatedBy: installedAppVersion.UserId,
+				UpdatedOn: time.Now(),
+			},
+		}
+		err = impl.pipelineStatusTimelineService.SaveTimeline(timeline, nil, true)
+		if err != nil {
+			impl.logger.Errorw("error in creating timeline status for deployment initiation for this app store application", "err", err, "timeline", timeline)
+		}
 		_, err = impl.performDeployStageOnAcd(installedAppVersion, ctx, userId)
 		if err != nil {
 			impl.logger.Errorw("error", "err", err)
 			return nil, err
 		}
 	} else if util.IsHelmApp(installedAppVersion.DeploymentAppType) {
+
 		_, err = impl.appStoreDeploymentService.InstallAppByHelm(installedAppVersion, ctx)
 		if err != nil {
 			impl.logger.Errorw("error", "err", err)
@@ -482,12 +540,22 @@ func (impl InstalledAppServiceImpl) performDeployStage(installedAppVersionId int
 		return nil, err
 	}
 
-	// create build history for chart on default component
-	err = impl.appStoreDeploymentService.UpdateInstallAppVersionHistory(installedAppVersion)
-	if err != nil {
-		impl.logger.Errorw("error on creating history for chart deployment", "error", err)
-		return nil, err
+	if util.IsAcdApp(installedAppVersion.DeploymentAppType) {
+		// update build history for chart for argo_cd apps
+		err = impl.appStoreDeploymentService.UpdateInstalledAppVersionHistoryWithGitHash(installedAppVersion)
+		if err != nil {
+			impl.logger.Errorw("error on updating history for chart deployment", "error", err, "installedAppVersion", installedAppVersion)
+			return nil, err
+		}
+	} else {
+		// create build history for chart on default component deployed via helm
+		err = impl.appStoreDeploymentService.UpdateInstallAppVersionHistory(installedAppVersion)
+		if err != nil {
+			impl.logger.Errorw("error on creating history for chart deployment", "error", err, "installedAppVersion", installedAppVersion)
+			return nil, err
+		}
 	}
+
 	return installedAppVersion, nil
 }
 
@@ -521,7 +589,7 @@ func (impl *InstalledAppServiceImpl) triggerDeploymentEvent(installAppVersions [
 
 	for _, versions := range installAppVersions {
 		var status appStoreBean.AppstoreDeploymentStatus
-		payload := &appStoreBean.DeployPayload{InstalledAppVersionId: versions.InstalledAppVersionId}
+		payload := &appStoreBean.DeployPayload{InstalledAppVersionId: versions.InstalledAppVersionId, InstalledAppVersionHistoryId: versions.InstalledAppVersionHistoryId}
 		data, err := json.Marshal(payload)
 		if err != nil {
 			status = appStoreBean.QUE_ERROR
@@ -557,7 +625,7 @@ func (impl *InstalledAppServiceImpl) Subscribe() error {
 		}
 		impl.logger.Debugw("deployPayload:", "deployPayload", deployPayload)
 		//using userId 1 - for system user
-		_, err = impl.performDeployStage(deployPayload.InstalledAppVersionId, 1)
+		_, err = impl.performDeployStage(deployPayload.InstalledAppVersionId, deployPayload.InstalledAppVersionHistoryId, 1)
 		if err != nil {
 			impl.logger.Errorw("error in performing deploy stage", "deployPayload", deployPayload, "err", err)
 		}
@@ -743,7 +811,7 @@ func (impl InstalledAppServiceImpl) DeployDefaultComponent(chartGroupInstallRequ
 	//nats event
 
 	for _, versions := range installAppVersions {
-		_, err := impl.performDeployStage(versions.InstalledAppVersionId, chartGroupInstallRequest.UserId)
+		_, err := impl.performDeployStage(versions.InstalledAppVersionId, versions.InstalledAppVersionHistoryId, chartGroupInstallRequest.UserId)
 		if err != nil {
 			impl.logger.Errorw("error in performing deploy stage", "deployPayload", versions, "err", err)
 			_, err = impl.appStoreDeploymentService.AppStoreDeployOperationStatusUpdate(versions.InstalledAppVersionId, appStoreBean.QUE_ERROR)
@@ -779,6 +847,7 @@ func (impl *InstalledAppServiceImpl) FindAppDetailsForAppstoreApplication(instal
 		ClusterId:                     installedAppVerison.InstalledApp.Environment.ClusterId,
 		DeploymentAppType:             installedAppVerison.InstalledApp.DeploymentAppType,
 		DeploymentAppDeleteRequest:    installedAppVerison.InstalledApp.DeploymentAppDeleteRequest,
+		IsVirtualEnvironment:          installedAppVerison.InstalledApp.Environment.IsVirtualEnvironment,
 	}
 	userInfo, err := impl.userService.GetByIdIncludeDeleted(installedAppVerison.AuditLog.UpdatedBy)
 	if err != nil {
@@ -1118,17 +1187,17 @@ func (impl InstalledAppServiceImpl) FetchResourceTreeWithHibernateForACD(rctx co
 func checkHibernate(impl InstalledAppServiceImpl, resp *bean2.AppDetailContainer, ctx context.Context) map[string]interface{} {
 
 	responseTree := resp.ResourceTree
+	deploymentAppName := resp.AppName + "-" + resp.EnvironmentName
 
 	for _, node := range responseTree["nodes"].(interface{}).([]interface{}) {
 		currNode := node.(interface{}).(map[string]interface{})
-		name := resp.AppName + "-" + resp.Namespace
 		resName := util3.InterfaceToString(currNode["name"])
 		resKind := util3.InterfaceToString(currNode["kind"])
 		resGroup := util3.InterfaceToString(currNode["group"])
 		resVersion := util3.InterfaceToString(currNode["version"])
 		resNamespace := util3.InterfaceToString(currNode["namespace"])
 		rQuery := &application.ApplicationResourceRequest{
-			Name:         &name,
+			Name:         &deploymentAppName,
 			ResourceName: &resName,
 			Kind:         &resKind,
 			Group:        &resGroup,
@@ -1137,11 +1206,11 @@ func checkHibernate(impl InstalledAppServiceImpl, resp *bean2.AppDetailContainer
 		}
 		ctx, _ := context.WithTimeout(ctx, 60*time.Second)
 		if currNode["parentRefs"] == nil {
-
+			t0 := time.Now()
 			res, err := impl.acdClient.GetResource(ctx, rQuery)
 			if err != nil {
-				impl.logger.Errorw("GRPC_GET_RESOURCE", "data", res, "timeTaken", time.Since(time.Now()), "err", err)
-				return responseTree
+				impl.logger.Errorw("error getting response from acdClient", "request", rQuery, "data", res, "timeTaken", time.Since(t0), "err", err)
+				continue
 			}
 			if res.Manifest != nil {
 				manifest, _ := gjson.Parse(*res.Manifest).Value().(map[string]interface{})
@@ -1161,9 +1230,6 @@ func checkHibernate(impl InstalledAppServiceImpl, resp *bean2.AppDetailContainer
 
 			}
 
-			if err != nil {
-				impl.logger.Errorw("GRPC_GET_RESOURCE", "data", res, "timeTaken", time.Since(time.Now()), "err", err)
-			}
 		}
 		node = currNode
 	}

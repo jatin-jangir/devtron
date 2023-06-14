@@ -1357,7 +1357,9 @@ func (impl BulkUpdateServiceImpl) BulkBuildTrigger(request *BulkApplicationForEn
 				}
 				ciPipelineId = ciPipeline.ParentCiPipeline
 			}
-			materialResponse, err := impl.ciHandler.FetchMaterialsByPipelineId(ciPipelineId)
+
+			//if include/exclude configured showAll will include excluded materials also in list, if not configured it will ignore this flag
+			materialResponse, err := impl.ciHandler.FetchMaterialsByPipelineId(ciPipelineId, false)
 			if err != nil {
 				impl.logger.Errorw("error in fetching ci pipeline materials", "CiPipelineId", ciPipelineId, "err", err)
 				return nil, err
@@ -1379,7 +1381,7 @@ func (impl BulkUpdateServiceImpl) BulkBuildTrigger(request *BulkApplicationForEn
 				PipelineId:         ciPipelineId,
 				CiPipelineMaterial: ciMaterials,
 				TriggeredBy:        request.UserId,
-				InvalidateCache:    false,
+				InvalidateCache:    request.InvalidateCache,
 			}
 			latestCommitsMap[ciPipelineId] = ciTriggerRequest
 			ciCompletedStatus[ciPipelineId] = false
