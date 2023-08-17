@@ -122,17 +122,21 @@ components:
     image: "migrate/migrate"
     envVars:
       devtron:
-        SCRIPT_LOCATION: "/shared/sql/"
+        SCRIPT_LOCATION: "/shared/sql/" # 'shared' is compulsory 
         DB_NAME: "orchestrator"
+        MIGRATE_TO_VERSION: "0" #0->latest
       casbin:
-        SCRIPT_LOCATION: "/shared/casbin/"
+        SCRIPT_LOCATION: "/shared/casbin/" # 'shared' is compulsory 
         DB_NAME: "casbin"
+        MIGRATE_TO_VERSION: "0" #0->latest
       git_sensor:
-        SCRIPT_LOCATION: "/shared/sql/"
+        SCRIPT_LOCATION: "/shared/sql/" # 'shared' is compulsory 
         DB_NAME: "git_sensor"
+        MIGRATE_TO_VERSION: "0" #0->latest
       lens: 
-        SCRIPT_LOCATION: "/shared/sql/"
+        SCRIPT_LOCATION: "/shared/sql/"  # 'shared' is compulsory 
         DB_NAME: "lens"
+        MIGRATE_TO_VERSION: "0" #0->latest
 
 # values for argocd integration
 argo-cd:
