@@ -22,15 +22,15 @@ spec:
         - command:
             - /bin/sh
             - -c
-            - cp -r /scripts/ /shared/
+            - cp -r /scripts/. /shared/
           {{- if $.Values.installer.modules }}
           {{- if and (has "cicd" $.Values.installer.modules) ($.Release.IsUpgrade) }}
-          image: {{ include "common.image" (dict "component" $.Values.components.devtron "global" $.Values.global "extraImage" $.Values.components.devtron.cicdImage ) }}
+          image: {{ $.Values.components.devtron.cicdImage }}
           {{- else }}
-          image: {{ include "common.image" (dict "component" $.Values.components.devtron "global" $.Values.global) }}
+          image: {{ $.Values.components.devtron.image }}
           {{- end }}
           {{- else }}
-          image: {{ include "common.image" (dict "component" $.Values.components.devtron "global" $.Values.global) }}
+          image: {{ $.Values.components.devtron.image }}
           {{- end }}
           name: init-devtron
           volumeMounts:
@@ -42,8 +42,13 @@ spec:
             - -c
             - 'if [ $(MIGRATE_TO_VERSION) -eq "0" ]; then migrate -path $(SCRIPT_LOCATION) -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable up;  else   echo $(MIGRATE_TO_VERSION); migrate -path $(SCRIPT_LOCATION)  -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable goto $(MIGRATE_TO_VERSION);    fi '
           env:
+            {{- if $.Values.components.migrator.envVars.devtron.SCRIPT_LOCATION }}
+            - name: SCRIPT_LOCATION
+              value: {{ $.Values.components.migrator.envVars.devtron.SCRIPT_LOCATION }}
+            {{- else }}
             - name: SCRIPT_LOCATION
               value: /shared/sql/
+            {{- end }}
             - name: DB_TYPE
               value: postgres
             - name: DB_USER_NAME
@@ -54,8 +59,13 @@ spec:
               value: "5432"
             - name: DB_NAME
               value: {{ $.Values.components.migrator.envVars.devtron.DB_NAME }}
+            {{- if $.Values.components.migrator.envVars.devtron.MIGRATE_TO_VERSION }}
+            - name: MIGRATE_TO_VERSION
+              value: {{ $.Values.components.migrator.envVars.devtron.MIGRATE_TO_VERSION }}
+            {{- else }}
             - name: MIGRATE_TO_VERSION
               value: "0"
+            {{- end }}
           envFrom:
             - secretRef:
                 name: postgresql-migrator
@@ -75,8 +85,6 @@ spec:
           {{- end }}
           {{- end }}           
       restartPolicy: OnFailure
-      imagePullSecrets:
-      - name: devtron-image-pull
       volumes:
         - emptyDir: {}
           name: shared-volume 
@@ -102,7 +110,7 @@ spec:
       {{- end }}
       containers:
       - name: devtron-rollout
-        image: {{ include "common.image" (dict "component" $.Values.components.migrator "global" $.Values.global "extraImage" $.Values.components.migrator.kubectlImage ) }}
+        image: "quay.io/devtron/kubectl:latest"
         command: ['sh', '-c', 'kubectl rollout restart deployment/devtron -n devtroncd && kubectl rollout restart deployment/kubelink -n devtroncd']
         {{- if .casbin }}
         {{- if .casbin.resources }}        
@@ -115,7 +123,15 @@ spec:
             - /bin/sh
             - -c
             - cp -r /scripts/. /shared/
-          image:  -------
+          {{- if $.Values.installer.modules }}
+          {{- if and (has "cicd" $.Values.installer.modules) ($.Release.IsUpgrade) }}
+          image: {{ $.Values.components.devtron.cicdImage }}
+          {{- else }}
+          image: {{ $.Values.components.devtron.image }}
+          {{- end }}
+          {{- else }}
+          image: {{ $.Values.components.devtron.image }}
+          {{- end }}  
           name: init-devtron
           volumeMounts:
             - mountPath: /shared
@@ -125,8 +141,13 @@ spec:
             - -c
             - 'if [ $(MIGRATE_TO_VERSION) -eq "0" ]; then migrate -path $(SCRIPT_LOCATION) -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable up;  else   echo $(MIGRATE_TO_VERSION); migrate -path $(SCRIPT_LOCATION)  -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable goto $(MIGRATE_TO_VERSION);    fi '
           env:
+            {{- if $.Values.components.migrator.envVars.casbin.SCRIPT_LOCATION }}
+            - name: SCRIPT_LOCATION
+              value: {{ $.Values.components.migrator.envVars.casbin.SCRIPT_LOCATION }}
+            {{- else }}
             - name: SCRIPT_LOCATION
               value: /shared/casbin/
+            {{- end }}
             - name: DB_TYPE
               value: postgres
             - name: DB_USER_NAME
@@ -137,8 +158,13 @@ spec:
               value: "5432"
             - name: DB_NAME
               value: {{ $.Values.components.migrator.envVars.casbin.DB_NAME }}
+            {{- if $.Values.components.migrator.envVars.casbin.MIGRATE_TO_VERSION }}
+            - name: MIGRATE_TO_VERSION
+              value: {{ $.Values.components.migrator.envVars.casbin.MIGRATE_TO_VERSION }}
+            {{- else }}
             - name: MIGRATE_TO_VERSION
               value: "0"
+            {{- end }}
           envFrom:
             - secretRef:
                 name: postgresql-migrator
@@ -152,13 +178,13 @@ spec:
             - mountPath: /shared
               name: shared-volume  
       restartPolicy: OnFailure
-      imagePullSecrets:
-      - name: devtron-image-pull
       volumes:
         - emptyDir: {}
           name: shared-volume 
   backoffLimit: 20
   activeDeadlineSeconds: 1500
+
+  
 {{- if $.Values.installer.modules }}
 {{- if has "cicd" $.Values.installer.modules }}
 ---
@@ -182,7 +208,9 @@ spec:
             - /bin/sh
             - -c
             - cp -r sql /shared/
-          image: {{ include "common.image" (dict "component" $.Values.components.gitsensor "global" $.Values.global) }}
+          {{- if $.Values.components.gitsensor.image }}
+          image: {{ $.Values.components.gitsensor.image }}
+          {{- end }}
           name: init-git-sensor
           volumeMounts:
             - mountPath: /shared
@@ -193,8 +221,13 @@ spec:
             - -c
             - 'if [ $(MIGRATE_TO_VERSION) -eq "0" ]; then migrate -path $(SCRIPT_LOCATION) -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable up;  else   echo $(MIGRATE_TO_VERSION); migrate -path $(SCRIPT_LOCATION)  -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable goto $(MIGRATE_TO_VERSION);    fi '
           env:
+            {{- if $.Values.components.migrator.envVars.gitsensor.SCRIPT_LOCATION }}
+            - name: SCRIPT_LOCATION
+              value: {{ $.Values.components.migrator.envVars.gitsensor.SCRIPT_LOCATION }}
+            {{- else }}
             - name: SCRIPT_LOCATION
               value: /shared/sql/
+            {{- end }}
             - name: DB_TYPE
               value: postgres
             - name: DB_USER_NAME
@@ -205,8 +238,13 @@ spec:
               value: "5432"
             - name: DB_NAME
               value: {{ $.Values.components.migrator.envVars.gitsensor.DB_NAME }}
+            {{- if $.Values.components.migrator.envVars.gitsensor.MIGRATE_TO_VERSION }}
+            - name: MIGRATE_TO_VERSION
+              value: {{ $.Values.components.migrator.envVars.gitsensor.MIGRATE_TO_VERSION }}
+            {{- else }}
             - name: MIGRATE_TO_VERSION
               value: "0"
+            {{- end }}
           envFrom:
             - secretRef:
                 name: postgresql-migrator
@@ -252,7 +290,9 @@ spec:
             - /bin/sh
             - -c
             - cp -r sql /shared/
-          image: {{ include "common.image" (dict "component" $.Values.lens "global" $.Values.global) }}
+          {{- if $.Values.lens.image }}
+          image: {{ $.Values.lens.image }}
+          {{- end }}
           name: init-lens
           volumeMounts:
             - mountPath: /shared
@@ -264,8 +304,13 @@ spec:
             - -c
             - 'if [ $(MIGRATE_TO_VERSION) -eq "0" ]; then migrate -path $(SCRIPT_LOCATION) -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable up;  else   echo $(MIGRATE_TO_VERSION); migrate -path $(SCRIPT_LOCATION)  -database postgres://$(DB_USER_NAME):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable goto $(MIGRATE_TO_VERSION);    fi ' 
         env:
+            {{- if $.Values.components.migrator.envVars.lens.SCRIPT_LOCATION }}
+            - name: SCRIPT_LOCATION
+              value: {{ $.Values.components.migrator.envVars.lens.SCRIPT_LOCATION }}
+            {{- else }}
             - name: SCRIPT_LOCATION
               value: /shared/sql/
+            {{- end }}
             - name: DB_TYPE
               value: postgres
             - name: DB_USER_NAME
@@ -276,8 +321,13 @@ spec:
               value: "5432"
             - name: DB_NAME
               value: {{ $.Values.components.migrator.envVars.lens.DB_NAME }}
+            {{- if $.Values.components.migrator.envVars.lens.MIGRATE_TO_VERSION }}
+            - name: MIGRATE_TO_VERSION
+              value: {{ $.Values.components.migrator.envVars.lens.MIGRATE_TO_VERSION }}
+            {{- else }}
             - name: MIGRATE_TO_VERSION
               value: "0"
+            {{- end }}
           envFrom:
           - secretRef:
               name: postgresql-migrator
