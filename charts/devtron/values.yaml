@@ -92,7 +92,11 @@ components:
     imagePullPolicy: IfNotPresent
     initContainer:
       authenticator: "quay.io/devtron/authenticator:e414faff-393-13273"
-
+      
+  gitsensor:
+    image: "quay.io/devtron/git-sensor:84389534-200-14705"
+    imagePullPolicy: IfNotPresent
+      
   kubelink:
     image: "quay.io/devtron/kubelink:9fc8eec3-391-14421"
     imagePullPolicy: IfNotPresent
@@ -310,6 +314,9 @@ notifier:
     secretName: postgresql-postgresql
     keyName: postgresql-password
   resources: {}
+lens:
+  image: "quay.io/devtron/lens:c5c40d94-333-14586"
+  imagePullPolicy: IfNotPresent
 # Set enable to true if you want to use minio for storing cache and logs
 minio:
   enabled: false
